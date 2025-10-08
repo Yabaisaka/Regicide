@@ -1,21 +1,16 @@
-//
-//  ContentView.swift
-//  tvoc
-//
-//  Created by C-ocona on 2025/9/27.
-//
+// ContentView.swift
 
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var bluetoothVM = BluetoothViewModel()
+
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        if bluetoothVM.connectionState == .connected {
+            HealthMonitorView(bluetoothVM: bluetoothVM)
+        } else {
+            DeviceScannerView(bluetoothVM: bluetoothVM)
         }
-        .padding()
     }
 }
 
