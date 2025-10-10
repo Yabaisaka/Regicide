@@ -5,9 +5,7 @@ import CoreBluetooth
 import Combine
 import SwiftUI
 
-// ===================================================================
-// 1. 状态管理和数据模型
-// ===================================================================
+// MARK: - State Management & Data Models
 enum ConnectionState: String {
     case disconnected = "已断开", scanning = "扫描中...", connecting = "连接中...",
          connected = "已连接", failed = "连接失败", unavailable = "蓝牙不可用"
@@ -25,9 +23,7 @@ struct VelocityDataPoint: Identifiable, Hashable {
     let velocity: Double
 }
 
-// ===================================================================
-// 2. ViewModel 主体
-// ===================================================================
+// MARK: - ViewModel Body
 class BluetoothViewModel: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     
     // MARK: - Published Properties
@@ -46,7 +42,7 @@ class BluetoothViewModel: NSObject, ObservableObject, CBCentralManagerDelegate, 
     }
     
     // MARK: - Private Properties
-    private var centralManager: CBCentralManager?
+    private var centralManager: CBCentralManager!
     private var peripheral: CBPeripheral?
     private let serviceUUID = CBUUID(string: "4fafc201-1fb5-459e-8fcc-c5c9c331914b")
     private let waveformCharacteristicUUID = CBUUID(string: "beb5483e-36e1-4688-b7f5-ea07361b26a8")
@@ -60,50 +56,34 @@ class BluetoothViewModel: NSObject, ObservableObject, CBCentralManagerDelegate, 
     private let confirmationCount: Int = 5
     private var startConfirmationCounter: Int = 0
     private var endConfirmationCounter: Int = 0
-    private var shouldStartScanningOnPowerOn = false
-    // MARK: - Initialization
+
+    // MARK: - Initialization (Stable Version)
     override init() {
         super.init()
         self.velocityCurve = Array(repeating: VelocityDataPoint(velocity: 0.0), count: maxPointsOnChart)
+        centralManager = CBCentralManager(delegate: self, queue: nil)
     }
 
     // MARK: - Public Control Methods
-    func startBluetoothService() {
-        if centralManager == nil {
-            print("--- 1. 正在启动蓝牙服务 (startBluetoothService called) ---")
-            let options = [CBCentralManagerOptionShowPowerAlertKey: true]
-            self.centralManager = CBCentralManager(delegate: self, queue: nil, options: options)
-        }
-    }
-    
     func startScanning() {
-        print("--- 3. 请求开始扫描 (startScanning called) ---")
-        guard let centralManager = centralManager else {
-            print("    -> 失败：centralManager 尚未创建！")
-            shouldStartScanningOnPowerOn = true
-            startBluetoothService()
-            return }
         guard centralManager.state == .poweredOn else {
-            print("    -> 失败：蓝牙未开启！")
-            shouldStartScanningOnPowerOn = true
             self.connectionState = .unavailable; return
         }
         self.discoveredPeripherals = []
         isScanning = true
         connectionState = .scanning
-        print("--- 4. 正在调用 centralManager.scanForPeripherals ---")
         centralManager.scanForPeripherals(withServices: [serviceUUID], options: nil)
     }
 
     func stopScan() {
-        guard let centralManager = centralManager, isScanning else { return }
-        centralManager.stopScan()
-        isScanning = false
-        if connectionState == .scanning { connectionState = .disconnected }
+        if isScanning {
+            centralManager.stopScan()
+            isScanning = false
+            if connectionState == .scanning { connectionState = .disconnected }
+        }
     }
 
     func connect(to peripheralData: ScannedPeripheral) {
-        guard let centralManager = centralManager else { return }
         stopScan()
         connectionState = .connecting
         self.peripheral = peripheralData.peripheral
@@ -112,30 +92,20 @@ class BluetoothViewModel: NSObject, ObservableObject, CBCentralManagerDelegate, 
     }
 
     func disconnect() {
-        guard let centralManager = centralManager, let peripheral = self.peripheral else { return }
+        guard let peripheral = self.peripheral else { return }
         centralManager.cancelPeripheralConnection(peripheral)
     }
     
-    // MARK: - CBCentralManagerDelegate (包含必须实现的方法)
-    
-    // --- 这就是你缺失的那个必须实现的方法！ ---
+    // MARK: - CBCentralManagerDelegate
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        if central.state == .poweredOn {
-            // 蓝牙已开启！检查是否需要自动开始扫描
-            if shouldStartScanningOnPowerOn {
-                shouldStartScanningOnPowerOn = false // 重置标志位
-                startScanning() // 现在可以安全地开始扫描了
-            } else {
-                 // 如果不需要自动扫描，就更新状态
-                if self.connectionState != .connected && self.connectionState != .connecting {
-                    self.connectionState = .disconnected
-                }
-            }
-        } else {
+        if central.state != .poweredOn {
             self.connectionState = .unavailable
+        } else {
+            if self.connectionState != .connected {
+                 self.connectionState = .disconnected
+            }
         }
     }
-    
     
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String : Any], rssi RSSI: NSNumber) {
         if !discoveredPeripherals.contains(where: { $0.id == peripheral.identifier }) {
@@ -168,9 +138,7 @@ class BluetoothViewModel: NSObject, ObservableObject, CBCentralManagerDelegate, 
         }
     }
     
-    // MARK: - CBPeripheralDelegate & VTI Calculation
-    // ... 此处的方法都不是必须实现的，但我们的逻辑需要它们 ...
-    
+    // MARK: - CBPeripheralDelegate
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard let services = peripheral.services else { return }
         for service in services where service.uuid == serviceUUID {
@@ -199,7 +167,8 @@ class BluetoothViewModel: NSObject, ObservableObject, CBCentralManagerDelegate, 
             }
         }
     }
-
+    
+    // MARK: - VTI Calculation Logic
     private func processRobustAutomaticVTI(with currentVelocity: Double) {
         let dataPoint = VelocityDataPoint(velocity: currentVelocity)
         if isEjecting {
