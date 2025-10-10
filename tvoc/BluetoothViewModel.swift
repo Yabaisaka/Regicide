@@ -30,12 +30,12 @@ class BluetoothViewModel: NSObject, ObservableObject, CBCentralManagerDelegate, 
     @Published var connectionState: ConnectionState = .disconnected
     @Published var isScanning = false
     @Published var discoveredPeripherals: [ScannedPeripheral] = []
-    
+    @Published var yAxisDomain: ClosedRange<Double> = -100.0...200.0
     @Published var instantaneousVelocity_cm_s: Double = 0.0
     @Published var velocityCurve: [VelocityDataPoint] = []
     @Published var vti: Double = 0.0
     @Published var vesselRadius: Double = 0.01
-
+    @Published var yAxisZoomFactor: Double = 0.2
     var strokeVolume: Double {
         let area = Double.pi * pow(vesselRadius, 2)
         return vti * area * 1_000_000
@@ -46,22 +46,24 @@ class BluetoothViewModel: NSObject, ObservableObject, CBCentralManagerDelegate, 
     private var peripheral: CBPeripheral?
     private let serviceUUID = CBUUID(string: "4fafc201-1fb5-459e-8fcc-c5c9c331914b")
     private let waveformCharacteristicUUID = CBUUID(string: "beb5483e-36e1-4688-b7f5-ea07361b26a8")
-    
     private let maxPointsOnChart = 300
     private let prf = 1000.0
-    
     private var vtiCycleBuffer: [VelocityDataPoint] = []
     private var isEjecting: Bool = false
     private let ejectionThreshold: Double = 0.15
     private let confirmationCount: Int = 5
     private var startConfirmationCounter: Int = 0
     private var endConfirmationCounter: Int = 0
-
+    private let filterWindowSize: Int = 5
+    private var rawVelocityBuffer: [Double] = []
+    private let downsamplingFactor: Int = 3
+    private var dataPointCounter: Int = 0
     // MARK: - Initialization (Stable Version)
     override init() {
         super.init()
         self.velocityCurve = Array(repeating: VelocityDataPoint(velocity: 0.0), count: maxPointsOnChart)
         centralManager = CBCentralManager(delegate: self, queue: nil)
+        self.rawVelocityBuffer = Array(repeating: 0.0, count: filterWindowSize)
     }
 
     // MARK: - Public Control Methods
@@ -155,14 +157,22 @@ class BluetoothViewModel: NSObject, ObservableObject, CBCentralManagerDelegate, 
             return
         }
     }
-    
+    // MARK: - Data Reception
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard let data = characteristic.value else { return }
         if let str = String(data: data, encoding: .utf8), let vel_ms = Double(str) {
+            dataPointCounter += 1
+            guard dataPointCounter % downsamplingFactor == 0 else {
+                // 如果还没到更新的时机，就直接返回，什么都不做
+                return
+            }
             DispatchQueue.main.async {
-                self.instantaneousVelocity_cm_s = vel_ms * 100.0
+                self.rawVelocityBuffer.removeFirst()
+                self.rawVelocityBuffer.append(vel_ms)
+                let smoothedVelocity = self.rawVelocityBuffer.reduce(0, +) / Double(self.filterWindowSize)
+                self.instantaneousVelocity_cm_s = smoothedVelocity * 100.0
                 self.velocityCurve.removeFirst()
-                self.velocityCurve.append(VelocityDataPoint(velocity: vel_ms))
+                self.velocityCurve.append(VelocityDataPoint(velocity: smoothedVelocity))
                 self.processRobustAutomaticVTI(with: vel_ms)
             }
         }
